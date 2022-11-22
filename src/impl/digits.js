@@ -70,6 +70,6 @@ export function parseDigits(str) {
   }
 }
 
-export function digitRegex({ numberingSystem }, append = "") {
-  return new RegExp(`${numberingSystems[numberingSystem || "latn"]}${append}`);
+export function digitRegex(append = "") {
+  return new RegExp(`${numberingSystems["latn"]}${append}`);
 }

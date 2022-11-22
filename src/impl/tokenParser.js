@@ -12,6 +12,20 @@ function intUnit(regex, post = (i) => i) {
   return { regex, deser: ([s]) => post(parseDigits(s)) };
 }
 
+console.log("Custom Luxon loaded");
+
+const one = digitRegex(),
+  two = digitRegex("{2}"),
+  three = digitRegex("{3}"),
+  four = digitRegex("{4}"),
+  six = digitRegex("{6}"),
+  oneOrTwo = digitRegex("{1,2}"),
+  oneToThree = digitRegex("{1,3}"),
+  oneToSix = digitRegex("{1,6}"),
+  oneToNine = digitRegex("{1,9}"),
+  twoToFour = digitRegex("{2,4}"),
+  fourToSix = digitRegex("{4,6}");
+
 const NBSP = String.fromCharCode(160);
 const spaceOrNBSP = `[ ${NBSP}]`;
 const spaceOrNBSPRegExp = new RegExp(spaceOrNBSP, "g");
@@ -54,18 +68,7 @@ function escapeToken(value) {
 }
 
 function unitForToken(token, loc) {
-  const one = digitRegex(loc),
-    two = digitRegex(loc, "{2}"),
-    three = digitRegex(loc, "{3}"),
-    four = digitRegex(loc, "{4}"),
-    six = digitRegex(loc, "{6}"),
-    oneOrTwo = digitRegex(loc, "{1,2}"),
-    oneToThree = digitRegex(loc, "{1,3}"),
-    oneToSix = digitRegex(loc, "{1,6}"),
-    oneToNine = digitRegex(loc, "{1,9}"),
-    twoToFour = digitRegex(loc, "{2,4}"),
-    fourToSix = digitRegex(loc, "{4,6}"),
-    literal = (t) => ({ regex: RegExp(escapeToken(t.val)), deser: ([s]) => s, literal: true }),
+  const literal = (t) => ({ regex: RegExp(escapeToken(t.val)), deser: ([s]) => s, literal: true }),
     unitate = (t) => {
       if (token.literal) {
         return literal(t);
