@@ -4371,7 +4371,7 @@ var luxon = (function (exports) {
   }
 
   function digitRegex(append = "") {
-    return new RegExp(`${numberingSystems["latn"]}${append}`);
+    return `${numberingSystems["latn"]}${append}`;
   }
 
   const MISSING_FTP = "missing Intl.DateTimeFormat.formatToParts support";
@@ -4393,6 +4393,8 @@ var luxon = (function (exports) {
     oneToNine = digitRegex("{1,9}"),
     twoToFour = digitRegex("{2,4}"),
     fourToSix = digitRegex("{4,6}");
+
+  const escapeRegexLiteral = /[\-\[\]{}()*+?.,\\\^$|#\s]/g;
 
   const NBSP = String.fromCharCode(160);
   const spaceOrNBSP = `[ ${NBSP}]`;
@@ -4416,7 +4418,7 @@ var luxon = (function (exports) {
       return null;
     } else {
       return {
-        regex: RegExp(strings.map(fixListRegex).join("|")),
+        regex: strings.map(fixListRegex).join("|"),
         deser: ([s]) =>
           strings.findIndex((i) => stripInsensitivities(s) === stripInsensitivities(i)) +
           startIndex,
@@ -4433,15 +4435,11 @@ var luxon = (function (exports) {
   }
 
   function escapeToken(value) {
-    return value.replace(/[\-\[\]{}()*+?.,\\\^$|#\s]/g, "\\$&");
+    return value.replace(escapeRegexLiteral, "\\$&");
   }
 
   function unitForToken(token, loc) {
-    const literal = (t) => ({
-        regex: RegExp(escapeToken(t.val)),
-        deser: ([s]) => s,
-        literal: true,
-      }),
+    const literal = (t) => ({ regex: escapeToken(t.val), deser: ([s]) => s, literal: true }),
       unitate = (t) => {
         if (token.literal) {
           return literal(t);
@@ -4637,7 +4635,7 @@ var luxon = (function (exports) {
   }
 
   function buildRegex(units) {
-    const re = units.map((u) => u.regex).reduce((f, r) => `${f}(${r.source})`, "");
+    const re = units.map((u) => u.regex).reduce((f, r) => `${f}(${r})`, "");
     return [`^${re}$`, units];
   }
 
@@ -4776,9 +4774,21 @@ var luxon = (function (exports) {
    * @private
    */
 
+  function stringifyUnit(unit) {
+    if (!unit.regex) {
+      return unit;
+    }
+    const isAlreadyString = typeof unit.regex === "string";
+    const regexSource = isAlreadyString ? unit.regex : unit.regex.source;
+    return {
+      ...unit,
+      regex: regexSource,
+    };
+  }
+
   function explainFromTokens(locale, input, format) {
     const tokens = expandMacroTokens(Formatter.parseFormat(format), locale),
-      units = tokens.map((t) => unitForToken(t, locale)),
+      units = tokens.map((t) => stringifyUnit(unitForToken(t, locale))),
       disqualifyingUnit = units.find((t) => t.invalidReason);
 
     if (disqualifyingUnit) {

@@ -5614,7 +5614,7 @@ define(["exports"], function (exports) {
       append = "";
     }
 
-    return new RegExp("" + numberingSystems["latn"] + append);
+    return "" + numberingSystems["latn"] + append;
   }
 
   var MISSING_FTP = "missing Intl.DateTimeFormat.formatToParts support";
@@ -5647,6 +5647,7 @@ define(["exports"], function (exports) {
     oneToNine = digitRegex("{1,9}"),
     twoToFour = digitRegex("{2,4}"),
     fourToSix = digitRegex("{4,6}");
+  var escapeRegexLiteral = /[\-\[\]{}()*+?.,\\\^$|#\s]/g;
   var NBSP = String.fromCharCode(160);
   var spaceOrNBSP = "[ " + NBSP + "]";
   var spaceOrNBSPRegExp = new RegExp(spaceOrNBSP, "g");
@@ -5669,7 +5670,7 @@ define(["exports"], function (exports) {
       return null;
     } else {
       return {
-        regex: RegExp(strings.map(fixListRegex).join("|")),
+        regex: strings.map(fixListRegex).join("|"),
         deser: function deser(_ref2) {
           var s = _ref2[0];
           return (
@@ -5705,13 +5706,13 @@ define(["exports"], function (exports) {
   }
 
   function escapeToken(value) {
-    return value.replace(/[\-\[\]{}()*+?.,\\\^$|#\s]/g, "\\$&");
+    return value.replace(escapeRegexLiteral, "\\$&");
   }
 
   function unitForToken(token, loc) {
     var literal = function literal(t) {
         return {
-          regex: RegExp(escapeToken(t.val)),
+          regex: escapeToken(t.val),
           deser: function deser(_ref5) {
             var s = _ref5[0];
             return s;
@@ -5966,7 +5967,7 @@ define(["exports"], function (exports) {
         return u.regex;
       })
       .reduce(function (f, r) {
-        return f + "(" + r.source + ")";
+        return f + "(" + r + ")";
       }, "");
     return ["^" + re + "$", units];
   }
@@ -6130,10 +6131,22 @@ define(["exports"], function (exports) {
    * @private
    */
 
+  function stringifyUnit(unit) {
+    if (!unit.regex) {
+      return unit;
+    }
+
+    var isAlreadyString = typeof unit.regex === "string";
+    var regexSource = isAlreadyString ? unit.regex : unit.regex.source;
+    return _extends({}, unit, {
+      regex: regexSource,
+    });
+  }
+
   function explainFromTokens(locale, input, format) {
     var tokens = expandMacroTokens(Formatter.parseFormat(format), locale),
       units = tokens.map(function (t) {
-        return unitForToken(t, locale);
+        return stringifyUnit(unitForToken(t, locale));
       }),
       disqualifyingUnit = units.find(function (t) {
         return t.invalidReason;
