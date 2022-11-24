@@ -71,5 +71,5 @@ export function parseDigits(str) {
 }
 
 export function digitRegex(append = "") {
-  return new RegExp(`${numberingSystems["latn"]}${append}`);
+  return `${numberingSystems["latn"]}${append}`;
 }
