@@ -29,7 +29,7 @@
     "benchmark": "babel-node benchmarks/index.js",
     "codecov": "codecov",
     "prepack": "babel-node tasks/buildAll.js",
-    "prepare": "husky install"
+    "prepare-old": "husky install"
   },
   "lint-staged": {
     "*.{js,json}": [
