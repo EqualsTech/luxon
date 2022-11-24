@@ -407,9 +407,11 @@ function stringifyUnit(unit) {
   if (!unit.regex) {
     return unit;
   }
+  const isAlreadyString = typeof unit.regex === "string";
+  const regexSource = isAlreadyString ? unit.regex : unit.regex.source;
   return {
     ...unit,
-    regex: unit.regex.source,
+    regex: regexSource,
   };
 }
 
