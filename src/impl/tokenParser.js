@@ -264,7 +264,7 @@ function tokenForPart(part, locale, formatOpts) {
 }
 
 function buildRegex(units) {
-  const re = units.map((u) => u.regex).reduce((f, r) => `${f}(${r.source})`, "");
+  const re = units.map((u) => u.regex).reduce((f, r) => `${f}(${r})`, "");
   return [`^${re}$`, units];
 }
 
@@ -403,9 +403,19 @@ export function expandMacroTokens(tokens, locale) {
  * @private
  */
 
+function stringifyUnit(unit) {
+  if (!unit.regex) {
+    return unit;
+  }
+  return {
+    ...unit,
+    regex: unit.regex.source,
+  };
+}
+
 export function explainFromTokens(locale, input, format) {
   const tokens = expandMacroTokens(Formatter.parseFormat(format), locale),
-    units = tokens.map((t) => unitForToken(t, locale)),
+    units = tokens.map((t) => stringifyUnit(unitForToken(t, locale))),
     disqualifyingUnit = units.find((t) => t.invalidReason);
 
   if (disqualifyingUnit) {
