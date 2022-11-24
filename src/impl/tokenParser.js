@@ -48,7 +48,7 @@ function oneOf(strings, startIndex) {
     return null;
   } else {
     return {
-      regex: RegExp(strings.map(fixListRegex).join("|")),
+      regex: strings.map(fixListRegex).join("|"),
       deser: ([s]) =>
         strings.findIndex((i) => stripInsensitivities(s) === stripInsensitivities(i)) + startIndex,
     };
@@ -68,7 +68,7 @@ function escapeToken(value) {
 }
 
 function unitForToken(token, loc) {
-  const literal = (t) => ({ regex: RegExp(escapeToken(t.val)), deser: ([s]) => s, literal: true }),
+  const literal = (t) => ({ regex: escapeToken(t.val), deser: ([s]) => s, literal: true }),
     unitate = (t) => {
       if (token.literal) {
         return literal(t);
