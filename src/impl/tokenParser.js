@@ -26,6 +26,8 @@ const one = digitRegex(),
   twoToFour = digitRegex("{2,4}"),
   fourToSix = digitRegex("{4,6}");
 
+const escapeRegexLiteral = /[\-\[\]{}()*+?.,\\\^$|#\s]/g;
+
 const NBSP = String.fromCharCode(160);
 const spaceOrNBSP = `[ ${NBSP}]`;
 const spaceOrNBSPRegExp = new RegExp(spaceOrNBSP, "g");
@@ -64,7 +66,7 @@ function simple(regex) {
 }
 
 function escapeToken(value) {
-  return value.replace(/[\-\[\]{}()*+?.,\\\^$|#\s]/g, "\\$&");
+  return value.replace(escapeRegexLiteral, "\\$&");
 }
 
 function unitForToken(token, loc) {
