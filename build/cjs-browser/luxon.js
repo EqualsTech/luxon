@@ -5613,7 +5613,6 @@ function intUnit(regex, post) {
   };
 }
 
-console.log("Custom Luxon loaded");
 var one = digitRegex(),
   two = digitRegex("{2}"),
   three = digitRegex("{3}"),

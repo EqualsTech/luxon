@@ -4380,8 +4380,6 @@ var luxon = (function (exports) {
     return { regex, deser: ([s]) => post(parseDigits(s)) };
   }
 
-  console.log("Custom Luxon loaded");
-
   const one = digitRegex(),
     two = digitRegex("{2}"),
     three = digitRegex("{3}"),
