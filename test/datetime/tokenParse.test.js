@@ -1,7 +1,7 @@
 /* global test expect */
 import { DateTime } from "../../src/luxon";
 import Helpers from "../helpers";
-
+import Settings from "../../src/settings";
 import { ConflictingSpecificationError } from "../../src/errors";
 
 //------
@@ -790,6 +790,12 @@ test("DateTime.fromFormat() parses localized macro tokens", () => {
   }
 });
 
+test("DateTime.fromFormat() allows non-breaking white-space to be substituted inside macro-tokens", () => {
+  expect(DateTime.fromFormat("5:54 PM", "t", { locale: "en-US" }).isValid).toBe(true);
+  expect(DateTime.fromFormat("5:54 PM", "t", { locale: "en-US" }).isValid).toBe(true);
+  expect(DateTime.fromFormat("5:54\nPM", "t", { locale: "en-US" }).isValid).toBe(false);
+});
+
 test("DateTime.fromFormat() throws if you don't provide a format", () => {
   expect(() => DateTime.fromFormat("yo")).toThrowError();
 });
@@ -835,6 +841,13 @@ test("DateTime.fromFormat containg special regex token", () => {
   expect(
     DateTime.fromFormat("2019-01-14T11-30\tIndian/Maldives\t", "yyyy-MM-dd'T'HH-mm't'z't'").isValid
   ).toBe(false);
+});
+
+// #1362
+test("DateTime.fromFormat only an offset", () => {
+  const dt = DateTime.fromFormat("+0100", "ZZZ", { setZone: true });
+  expect(dt.isValid).toBe(true);
+  expect(dt.offset).toBe(60);
 });
 
 //------
