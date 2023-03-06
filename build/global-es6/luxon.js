@@ -642,27 +642,39 @@ var luxon = (function (exports) {
     // b) if it does, use Intl to resolve everything
     // c) if Intl fails, try again without the -u
 
+    // private subtags and unicode subtags have ordering requirements,
+    // and we're not properly parsing this, so just strip out the
+    // private ones if they exist.
+    const xIndex = localeStr.indexOf("-x-");
+    if (xIndex !== -1) {
+      localeStr = localeStr.substring(0, xIndex);
+    }
+
     const uIndex = localeStr.indexOf("-u-");
     if (uIndex === -1) {
       return [localeStr];
     } else {
       let options;
-      const smaller = localeStr.substring(0, uIndex);
+      let selectedStr;
       try {
         options = getCachedDTF(localeStr).resolvedOptions();
+        selectedStr = localeStr;
       } catch (e) {
+        const smaller = localeStr.substring(0, uIndex);
         options = getCachedDTF(smaller).resolvedOptions();
+        selectedStr = smaller;
       }
 
       const { numberingSystem, calendar } = options;
-      // return the smaller one so that we can append the calendar and numbering overrides to it
-      return [smaller, numberingSystem, calendar];
+      return [selectedStr, numberingSystem, calendar];
     }
   }
 
   function intlConfigString(localeStr, numberingSystem, outputCalendar) {
     if (outputCalendar || numberingSystem) {
-      localeStr += "-u";
+      if (!localeStr.includes("-u-")) {
+        localeStr += "-u";
+      }
 
       if (outputCalendar) {
         localeStr += `-ca-${outputCalendar}`;
@@ -757,9 +769,13 @@ var luxon = (function (exports) {
   class PolyDateFormatter {
     constructor(dt, intl, opts) {
       this.opts = opts;
+      this.originalZone = undefined;
 
-      let z;
-      if (dt.zone.isUniversal) {
+      let z = undefined;
+      if (this.opts.timeZone) {
+        // Don't apply any workarounds if a timeZone is explicitly provided in opts
+        this.dt = dt;
+      } else if (dt.zone.type === "fixed") {
         // UTC-8 or Etc/UTC-8 are not part of tzdata, only Etc/GMT+8 and the like.
         // That is why fixed-offset TZ is set to that unless it is:
         // 1. Representing offset 0 when UTC is used to maintain previous behavior and does not become GMT.
@@ -772,40 +788,60 @@ var luxon = (function (exports) {
           z = offsetZ;
           this.dt = dt;
         } else {
-          // Not all fixed-offset zones like Etc/+4:30 are present in tzdata.
-          // So we have to make do. Two cases:
-          // 1. The format options tell us to show the zone. We can't do that, so the best
-          // we can do is format the date in UTC.
-          // 2. The format options don't tell us to show the zone. Then we can adjust them
-          // the time and tell the formatter to show it to us in UTC, so that the time is right
-          // and the bad zone doesn't show up.
+          // Not all fixed-offset zones like Etc/+4:30 are present in tzdata so
+          // we manually apply the offset and substitute the zone as needed.
           z = "UTC";
-          if (opts.timeZoneName) {
-            this.dt = dt;
-          } else {
-            this.dt = dt.offset === 0 ? dt : DateTime.fromMillis(dt.ts + dt.offset * 60 * 1000);
-          }
+          this.dt = dt.offset === 0 ? dt : dt.setZone("UTC").plus({ minutes: dt.offset });
+          this.originalZone = dt.zone;
         }
       } else if (dt.zone.type === "system") {
         this.dt = dt;
-      } else {
+      } else if (dt.zone.type === "iana") {
         this.dt = dt;
         z = dt.zone.name;
+      } else {
+        // Custom zones can have any offset / offsetName so we just manually
+        // apply the offset and substitute the zone as needed.
+        z = "UTC";
+        this.dt = dt.setZone("UTC").plus({ minutes: dt.offset });
+        this.originalZone = dt.zone;
       }
 
       const intlOpts = { ...this.opts };
-      if (z) {
-        intlOpts.timeZone = z;
-      }
+      intlOpts.timeZone = intlOpts.timeZone || z;
       this.dtf = getCachedDTF(intl, intlOpts);
     }
 
     format() {
+      if (this.originalZone) {
+        // If we have to substitute in the actual zone name, we have to use
+        // formatToParts so that the timezone can be replaced.
+        return this.formatToParts()
+          .map(({ value }) => value)
+          .join("");
+      }
       return this.dtf.format(this.dt.toJSDate());
     }
 
     formatToParts() {
-      return this.dtf.formatToParts(this.dt.toJSDate());
+      const parts = this.dtf.formatToParts(this.dt.toJSDate());
+      if (this.originalZone) {
+        return parts.map((part) => {
+          if (part.type === "timeZoneName") {
+            const offsetName = this.originalZone.offsetName(this.dt.ts, {
+              locale: this.dt.locale,
+              format: this.opts.timeZoneName,
+            });
+            return {
+              ...part,
+              value: offsetName,
+            };
+          } else {
+            return part;
+          }
+        });
+      }
+      return parts;
     }
 
     resolvedOptions() {
@@ -1521,7 +1557,10 @@ var luxon = (function (exports) {
     // for legacy reasons, years between 0 and 99 are interpreted as 19XX; revert that
     if (obj.year < 100 && obj.year >= 0) {
       d = new Date(d);
-      d.setUTCFullYear(d.getUTCFullYear() - 1900);
+      // set the month and day again, this is necessary because year 2000 is a leap year, but year 100 is not
+      // so if obj.year is in 99, but obj.day makes it roll over into year 100,
+      // the calculations done by Date.UTC are using year 2000 - which is incorrect
+      d.setUTCFullYear(obj.year, obj.month - 1, obj.day);
     }
     return +d;
   }
@@ -1624,8 +1663,6 @@ var luxon = (function (exports) {
   function timeObject(obj) {
     return pick(obj, ["hour", "minute", "second", "millisecond"]);
   }
-
-  const ianaRegex = /[A-Za-z_+-]{1,256}(?::?\/[A-Za-z0-9_+-]{1,256}(?:\/[A-Za-z0-9_+-]{1,256})?)?/;
 
   /**
    * @private
@@ -1831,6 +1868,9 @@ var luxon = (function (exports) {
     }
 
     static parseFormat(fmt) {
+      // white-space is always considered a literal in user-provided formats
+      // the " " token has a special meaning (see unitForToken)
+
       let current = null,
         currentFull = "",
         bracketed = false;
@@ -1839,7 +1879,7 @@ var luxon = (function (exports) {
         const c = fmt.charAt(i);
         if (c === "'") {
           if (currentFull.length > 0) {
-            splits.push({ literal: bracketed, val: currentFull });
+            splits.push({ literal: bracketed || /^\s+$/.test(currentFull), val: currentFull });
           }
           current = null;
           currentFull = "";
@@ -1850,7 +1890,7 @@ var luxon = (function (exports) {
           currentFull += c;
         } else {
           if (currentFull.length > 0) {
-            splits.push({ literal: false, val: currentFull });
+            splits.push({ literal: /^\s+$/.test(currentFull), val: currentFull });
           }
           currentFull = c;
           current = c;
@@ -1858,7 +1898,7 @@ var luxon = (function (exports) {
       }
 
       if (currentFull.length > 0) {
-        splits.push({ literal: bracketed, val: currentFull });
+        splits.push({ literal: bracketed || /^\s+$/.test(currentFull), val: currentFull });
       }
 
       return splits;
@@ -1890,6 +1930,11 @@ var luxon = (function (exports) {
     formatDateTimeParts(dt, opts = {}) {
       const df = this.loc.dtFormatter(dt, { ...this.opts, ...opts });
       return df.formatToParts();
+    }
+
+    formatInterval(interval, opts = {}) {
+      const df = this.loc.dtFormatter(interval.start, { ...this.opts, ...opts });
+      return df.dtf.formatRange(interval.start.toJSDate(), interval.end.toJSDate());
     }
 
     resolvedOptions(dt, opts = {}) {
@@ -2202,6 +2247,8 @@ var luxon = (function (exports) {
    * Some extractions are super dumb and simpleParse and fromStrings help DRY them.
    */
 
+  const ianaRegex = /[A-Za-z_+-]{1,256}(?::?\/[A-Za-z0-9_+-]{1,256}(?:\/[A-Za-z0-9_+-]{1,256})?)?/;
+
   function combineRegexes(...regexes) {
     const full = regexes.reduce((f, r) => f + r.source, "");
     return RegExp(`^${full}$`);
@@ -2405,7 +2452,7 @@ var luxon = (function (exports) {
   function preprocessRFC2822(s) {
     // Remove comments and folding whitespace and replace multiple-spaces with a single space
     return s
-      .replace(/\([^)]*\)|[\n\t]/g, " ")
+      .replace(/\([^()]*\)|[\n\t]/g, " ")
       .replace(/(\s\s+)/g, " ")
       .trim();
   }
@@ -3481,7 +3528,7 @@ var luxon = (function (exports) {
    * * **Interrogation** To analyze the Interval, use {@link Interval#count}, {@link Interval#length}, {@link Interval#hasSame}, {@link Interval#contains}, {@link Interval#isAfter}, or {@link Interval#isBefore}.
    * * **Transformation** To create other Intervals out of this one, use {@link Interval#set}, {@link Interval#splitAt}, {@link Interval#splitBy}, {@link Interval#divideEqually}, {@link Interval.merge}, {@link Interval.xor}, {@link Interval#union}, {@link Interval#intersection}, or {@link Interval#difference}.
    * * **Comparison** To compare this Interval to another one, use {@link Interval#equals}, {@link Interval#overlaps}, {@link Interval#abutsStart}, {@link Interval#abutsEnd}, {@link Interval#engulfs}
-   * * **Output** To convert the Interval into other representations, see {@link Interval#toString}, {@link Interval#toISO}, {@link Interval#toISODate}, {@link Interval#toISOTime}, {@link Interval#toFormat}, and {@link Interval#toDuration}.
+   * * **Output** To convert the Interval into other representations, see {@link Interval#toString}, {@link Interval#toLocaleString}, {@link Interval#toISO}, {@link Interval#toISODate}, {@link Interval#toISOTime}, {@link Interval#toFormat}, and {@link Interval#toDuration}.
    */
   class Interval {
     /**
@@ -3687,7 +3734,7 @@ var luxon = (function (exports) {
       if (!this.isValid) return NaN;
       const start = this.start.startOf(unit),
         end = this.end.startOf(unit);
-      return Math.floor(end.diff(start, unit).get(unit)) + 1;
+      return Math.floor(end.diff(start, unit).get(unit)) + (end.valueOf() !== this.end.valueOf());
     }
 
     /**
@@ -3979,6 +4026,30 @@ var luxon = (function (exports) {
     }
 
     /**
+     * Returns a localized string representing this Interval. Accepts the same options as the
+     * Intl.DateTimeFormat constructor and any presets defined by Luxon, such as
+     * {@link DateTime.DATE_FULL} or {@link DateTime.TIME_SIMPLE}. The exact behavior of this method
+     * is browser-specific, but in general it will return an appropriate representation of the
+     * Interval in the assigned locale. Defaults to the system's locale if no locale has been
+     * specified.
+     * @see https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/DateTimeFormat
+     * @param {Object} [formatOpts=DateTime.DATE_SHORT] - Either a DateTime preset or
+     * Intl.DateTimeFormat constructor options.
+     * @param {Object} opts - Options to override the configuration of the start DateTime.
+     * @example Interval.fromISO('2022-11-07T09:00Z/2022-11-08T09:00Z').toLocaleString(); //=> 11/7/2022 – 11/8/2022
+     * @example Interval.fromISO('2022-11-07T09:00Z/2022-11-08T09:00Z').toLocaleString(DateTime.DATE_FULL); //=> November 7 – 8, 2022
+     * @example Interval.fromISO('2022-11-07T09:00Z/2022-11-08T09:00Z').toLocaleString(DateTime.DATE_FULL, { locale: 'fr-FR' }); //=> 7–8 novembre 2022
+     * @example Interval.fromISO('2022-11-07T17:00Z/2022-11-07T19:00Z').toLocaleString(DateTime.TIME_SIMPLE); //=> 6:00 – 8:00 PM
+     * @example Interval.fromISO('2022-11-07T17:00Z/2022-11-07T19:00Z').toLocaleString({ weekday: 'short', month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit' }); //=> Mon, Nov 07, 6:00 – 8:00 p
+     * @return {string}
+     */
+    toLocaleString(formatOpts = DATE_SHORT, opts = {}) {
+      return this.isValid
+        ? Formatter.create(this.s.loc.clone(opts), formatOpts).formatInterval(this)
+        : INVALID$1;
+    }
+
+    /**
      * Returns an ISO 8601-compliant string representation of this Interval.
      * @see https://en.wikipedia.org/wiki/ISO_8601#Time_intervals
      * @param {Object} opts - The same options as {@link DateTime#toISO}
@@ -4013,10 +4084,14 @@ var luxon = (function (exports) {
     }
 
     /**
-     * Returns a string representation of this Interval formatted according to the specified format string.
-     * @param {string} dateFormat - the format string. This string formats the start and end time. See {@link DateTime#toFormat} for details.
-     * @param {Object} opts - options
-     * @param {string} [opts.separator =  ' – '] - a separator to place between the start and end representations
+     * Returns a string representation of this Interval formatted according to the specified format
+     * string. **You may not want this.** See {@link Interval#toLocaleString} for a more flexible
+     * formatting tool.
+     * @param {string} dateFormat - The format string. This string formats the start and end time.
+     * See {@link DateTime#toFormat} for details.
+     * @param {Object} opts - Options.
+     * @param {string} [opts.separator =  ' – '] - A separator to place between the start and end
+     * representations.
      * @return {string}
      */
     toFormat(dateFormat, { separator = " – " } = {}) {
@@ -4245,23 +4320,22 @@ var luxon = (function (exports) {
     ];
 
     const results = {};
+    const earlier = cursor;
     let lowestOrder, highWater;
 
     for (const [unit, differ] of differs) {
       if (units.indexOf(unit) >= 0) {
         lowestOrder = unit;
 
-        let delta = differ(cursor, later);
-        highWater = cursor.plus({ [unit]: delta });
+        results[unit] = differ(cursor, later);
+        highWater = earlier.plus(results);
 
         if (highWater > later) {
-          cursor = cursor.plus({ [unit]: delta - 1 });
-          delta -= 1;
+          results[unit]--;
+          cursor = earlier.plus(results);
         } else {
           cursor = highWater;
         }
-
-        results[unit] = delta;
       }
     }
 
@@ -4554,6 +4628,10 @@ var luxon = (function (exports) {
           // because we don't have any way to figure out what they are
           case "z":
             return simple(/[a-z_+-/]{1,256}?/i);
+          // this special-case "token" represents a place where a macro-token expanded into a white-space literal
+          // in this case we accept any non-newline white-space
+          case " ":
+            return simple(/[^\S\n\r]/);
           default:
             return literal(t);
         }
@@ -4607,13 +4685,14 @@ var luxon = (function (exports) {
     },
   };
 
-  function tokenForPart(part, locale, formatOpts) {
+  function tokenForPart(part, formatOpts) {
     const { type, value } = part;
 
     if (type === "literal") {
+      const isSpace = /^\s+$/.test(value);
       return {
-        literal: true,
-        val: value,
+        literal: !isSpace,
+        val: isSpace ? " " : value,
       };
     }
 
@@ -4813,7 +4892,7 @@ var luxon = (function (exports) {
 
     const formatter = Formatter.create(locale, formatOpts);
     const parts = formatter.formatDateTimeParts(getDummyDateTime());
-    return parts.map((p) => tokenForPart(p, locale, formatOpts));
+    return parts.map((p) => tokenForPart(p, formatOpts));
   }
 
   const nonLeapLadder = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334],
@@ -5087,7 +5166,7 @@ var luxon = (function (exports) {
   // by handling the zone options
   function parseDataToDateTime(parsed, parsedZone, opts, format, text, specificOffset) {
     const { setZone, zone } = opts;
-    if (parsed && Object.keys(parsed).length !== 0) {
+    if ((parsed && Object.keys(parsed).length !== 0) || parsedZone) {
       const interpretationZone = parsedZone || zone,
         inst = DateTime.fromObject(parsed, {
           ...opts,
@@ -6843,7 +6922,7 @@ var luxon = (function (exports) {
 
     /**
      * Equality check
-     * Two DateTimes are equal iff they represent the same millisecond, have the same zone and location, and are both valid.
+     * Two DateTimes are equal if and only if they represent the same millisecond, have the same zone and location, and are both valid.
      * To compare just the millisecond values, use `+dt1 === +dt2`.
      * @param {DateTime} other - the other DateTime
      * @return {boolean}
@@ -7164,7 +7243,7 @@ var luxon = (function (exports) {
     }
   }
 
-  const VERSION = "3.1.0";
+  const VERSION = "3.3.0";
 
   exports.DateTime = DateTime;
   exports.Duration = Duration;
